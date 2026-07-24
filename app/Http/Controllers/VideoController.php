@@ -111,11 +111,11 @@ class VideoController extends Controller
     private function generateVideo(string $source, string $photo, string $output, string $label): void
     {
         $font = $this->fontPath();
-        $filter = "[1:v]scale=300:300[photo];".
-            "[0:v][photo]overlay=x=(W-w)/2:y=(H-h)/2-75:enable='gte(t,28)'[withphoto];".
-            "[withphoto]drawtext=fontfile='{$font}':text='{$this->escapeDrawText($label)}':fontcolor=white:fontsize=54:".
-            "borderw=3:bordercolor=black@0.35:shadowcolor=black@0.55:shadowx=3:shadowy=3:".
-            "x=(w-text_w)/2:y=(h/2)+190:enable='gte(t,28)'[outv]";
+        $filter = "[1:v]scale=340:340[photo];".
+            "[0:v][photo]overlay=x=(W-w)/2:y=(H-h)/2+20:enable='gte(t,28)'[withphoto];".
+            "[withphoto]drawtext=fontfile='{$font}':text='{$this->escapeDrawText($label)}':fontcolor=black:fontsize=54:".
+            "borderw=2:bordercolor=white@0.75:shadowcolor=white@0.4:shadowx=2:shadowy=2:".
+            "x=(w-text_w)/2:y=(h/2)+225:enable='gte(t,28)'[outv]";
 
         $process = new Process([
             config('video.ffmpeg'), '-y', '-i', $source, '-i', $photo,
