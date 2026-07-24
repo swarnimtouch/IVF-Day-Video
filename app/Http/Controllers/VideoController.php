@@ -6,7 +6,6 @@ use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
@@ -31,7 +30,7 @@ class VideoController extends Controller
             'employee_code' => ['required', 'string', 'max:30', 'regex:/^[A-Za-z0-9]+$/'],
             'prefix' => ['required', 'in:Dr.,Prof.,Mr.,Ms.,Mrs.'],
             'doctor_name' => ['required', 'string', 'max:80', 'regex:/^[\pL\pM .\'-]+$/u'],
-            'city' => ['required', 'string', 'max:80', 'regex:/^[\pL\pM .\'-]+$/u'],
+            'city' => ['nullable', 'string', 'max:80', 'regex:/^[\pL\pM .\'-]+$/u'],
             'photo' => ['required', 'image', 'mimes:png,jpg,jpeg,webp', 'max:8192'],
         ], [
             'employee_code.regex' => 'Employee code may contain letters and numbers only.',
@@ -50,11 +49,9 @@ class VideoController extends Controller
 
         $user = User::create([
             'name' => $data['doctor_name'],
-            'email' => 'submission-'.$jobId.'@internal.local',
-            'password' => Hash::make(Str::random(40)),
             'employee_code' => strtoupper($data['employee_code']),
             'prefix' => $data['prefix'],
-            'city' => $data['city'],
+            'city' => $data['city'] ?? null,
             'download_token' => hash('sha256', Str::random(64)),
             'video_status' => 'processing',
         ]);
@@ -90,8 +87,12 @@ class VideoController extends Controller
             report($exception);
             $user->update(['video_status' => 'failed']);
             File::deleteDirectory($workDir);
+            $networkFailure = str_contains($exception->getMessage(), 'cURL error 7')
+                || str_contains($exception->getMessage(), 'Couldn\'t connect to server');
             return back()->withInput()->withErrors([
-                'video' => 'The video was generated, but S3 upload failed. Please check bucket credentials, region and permissions.',
+                'video' => $networkFailure
+                    ? 'The video was generated, but this server could not connect to AWS S3 on port 443. Please check outbound network/firewall access.'
+                    : 'The video was generated, but S3 upload failed. Please check bucket credentials, region and permissions.',
             ]);
         }
 
@@ -110,16 +111,16 @@ class VideoController extends Controller
     private function generateVideo(string $source, string $photo, string $output, string $label): void
     {
         $font = $this->fontPath();
-        $filter = "[1:v]scale=220:220[photo];".
-            "[0:v][photo]overlay=x=(W-w)/2-210:y=(H-h)/2:enable='gte(t,28)'[withphoto];".
+        $filter = "[1:v]scale=300:300[photo];".
+            "[0:v][photo]overlay=x=(W-w)/2:y=(H-h)/2-75:enable='gte(t,28)'[withphoto];".
             "[withphoto]drawtext=fontfile='{$font}':text='{$this->escapeDrawText($label)}':fontcolor=white:fontsize=54:".
             "borderw=3:bordercolor=black@0.35:shadowcolor=black@0.55:shadowx=3:shadowy=3:".
-            "x=(w/2)+35:y=(h-text_h)/2:enable='gte(t,28)'[outv]";
+            "x=(w-text_w)/2:y=(h/2)+190:enable='gte(t,28)'[outv]";
 
         $process = new Process([
             config('video.ffmpeg'), '-y', '-i', $source, '-i', $photo,
             '-filter_complex', $filter, '-map', '[outv]', '-map', '0:a?',
-            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '0', '-pix_fmt', 'yuv420p',
             '-c:a', 'copy', '-movflags', '+faststart', $output,
         ]);
         $process->setTimeout(300);

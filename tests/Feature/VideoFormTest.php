@@ -14,7 +14,7 @@ class VideoFormTest extends TestCase
     public function test_submission_requires_all_fields(): void
     {
         $this->post('/generate-video')->assertSessionHasErrors([
-            'employee_code', 'prefix', 'doctor_name', 'city', 'photo',
+            'employee_code', 'prefix', 'doctor_name', 'photo',
         ]);
     }
 }

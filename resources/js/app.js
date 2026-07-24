@@ -57,12 +57,12 @@ if (form && input && canvas) {
     modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
 
-    const messages = { employee_code: 'Enter an employee code using letters and numbers only.', prefix: 'Please select a prefix.', doctor_name: 'Please enter the doctor name.', city: 'Please enter the city.' };
+    const messages = { employee_code: 'Enter an employee code using letters and numbers only.', prefix: 'Please select a prefix.', doctor_name: 'Please enter the doctor name.' };
     const validate = field => {
         const error = document.querySelector(`[data-error-for="${field.name}"]`); let message = '';
-        if (!field.value.trim()) message = messages[field.name];
+        if (!field.value.trim() && field.name !== 'city') message = messages[field.name];
         else if (field.name === 'employee_code' && !/^[A-Za-z0-9]+$/.test(field.value)) message = messages.employee_code;
-        else if (['doctor_name','city'].includes(field.name) && !/^[\p{L}\p{M} .'-]+$/u.test(field.value)) message = 'Only letters, spaces, dots, apostrophes and hyphens are allowed.';
+        else if (field.value.trim() && ['doctor_name','city'].includes(field.name) && !/^[\p{L}\p{M} .'-]+$/u.test(field.value)) message = 'Only letters, spaces, dots, apostrophes and hyphens are allowed.';
         error.textContent = message || ''; field.classList.toggle('invalid', Boolean(message)); return !message;
     };
     form.querySelectorAll('input[name],select[name]').forEach(field => { if (field.type !== 'file') { field.addEventListener('blur', () => validate(field)); field.addEventListener('input', () => { if (field.classList.contains('invalid')) validate(field); }); } });
