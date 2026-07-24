@@ -2,11 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Process\Process;
 use Throwable;
 
@@ -14,17 +18,24 @@ class VideoController extends Controller
 {
     public function create(): View
     {
-        return view('welcome');
+        $completedUser = session('completed_user_id')
+            ? User::find(session('completed_user_id'))
+            : null;
+
+        return view('welcome', compact('completedUser'));
     }
 
     public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([
-            'employee_code' => ['required', 'string', 'max:30', 'regex:/^[A-Za-z0-9\-_\/]+$/'],
+            'employee_code' => ['required', 'string', 'max:30', 'regex:/^[A-Za-z0-9]+$/'],
             'prefix' => ['required', 'in:Dr.,Prof.,Mr.,Ms.,Mrs.'],
-            'doctor_name' => ['required', 'string', 'max:80'],
-            'city' => ['required', 'string', 'max:80'],
+            'doctor_name' => ['required', 'string', 'max:80', 'regex:/^[\pL\pM .\'-]+$/u'],
+            'city' => ['required', 'string', 'max:80', 'regex:/^[\pL\pM .\'-]+$/u'],
             'photo' => ['required', 'image', 'mimes:png,jpg,jpeg,webp', 'max:8192'],
+        ], [
+            'employee_code.regex' => 'Employee code may contain letters and numbers only.',
+            'doctor_name.regex' => 'Doctor name contains invalid characters.',
         ]);
 
         $sourceVideo = public_path('assets/base-video.mp4');
@@ -32,53 +43,108 @@ class VideoController extends Controller
 
         $jobId = now()->format('Ymd-His').'-'.Str::lower(Str::random(6));
         $workDir = storage_path("app/video-jobs/{$jobId}");
-        $outputDir = public_path('generated');
         File::ensureDirectoryExists($workDir);
-        File::ensureDirectoryExists($outputDir);
-
         $photoPath = $request->file('photo')->move($workDir, 'doctor-photo.png')->getPathname();
-        $outputName = 'doctor-video-'.$jobId.'.mp4';
-        $outputPath = $outputDir.DIRECTORY_SEPARATOR.$outputName;
+        $outputPath = $workDir.DIRECTORY_SEPARATOR.'doctor-video.mp4';
         $doctorLabel = trim($data['prefix'].' '.$data['doctor_name']);
-        $safeLabel = $this->escapeDrawText($doctorLabel);
-        $font = str_replace('\\', '/', env('VIDEO_FONT_PATH', 'C:/Windows/Fonts/arialbd.ttf'));
 
+        $user = User::create([
+            'name' => $data['doctor_name'],
+            'email' => 'submission-'.$jobId.'@internal.local',
+            'password' => Hash::make(Str::random(40)),
+            'employee_code' => strtoupper($data['employee_code']),
+            'prefix' => $data['prefix'],
+            'city' => $data['city'],
+            'download_token' => hash('sha256', Str::random(64)),
+            'video_status' => 'processing',
+        ]);
+
+        try {
+            $this->generateVideo($sourceVideo, $photoPath, $outputPath, $doctorLabel);
+        } catch (Throwable $exception) {
+            report($exception);
+            $user->update(['video_status' => 'failed']);
+            File::deleteDirectory($workDir);
+            return back()->withInput()->withErrors([
+                'video' => 'FFmpeg could not generate the video. Please check the configured FFmpeg path and font.',
+            ]);
+        }
+
+        try {
+            $disk = Storage::disk(config('video.disk'));
+            $folder = config('video.s3_folder').'/'.now()->format('Y/m').'/'.$user->id;
+            $photoKey = $folder.'/doctor-photo.png';
+            $videoKey = $folder.'/doctor-video.mp4';
+
+            $disk->put($photoKey, fopen($photoPath, 'rb'));
+            $disk->put($videoKey, fopen($outputPath, 'rb'));
+
+            $user->update([
+                'photo_key' => $photoKey,
+                'photo_url' => $disk->url($photoKey),
+                'video_key' => $videoKey,
+                'video_url' => $disk->url($videoKey),
+                'video_status' => 'completed',
+            ]);
+        } catch (Throwable $exception) {
+            report($exception);
+            $user->update(['video_status' => 'failed']);
+            File::deleteDirectory($workDir);
+            return back()->withInput()->withErrors([
+                'video' => 'The video was generated, but S3 upload failed. Please check bucket credentials, region and permissions.',
+            ]);
+        }
+
+        File::deleteDirectory($workDir);
+        return redirect()->route('video.form')->with('completed_user_id', $user->id)->withFragment('result');
+    }
+
+    public function download(User $user, string $token): StreamedResponse
+    {
+        abort_unless(hash_equals((string) $user->download_token, $token) && $user->video_key, 404);
+        $disk = Storage::disk(config('video.disk'));
+        abort_unless($disk->exists($user->video_key), 404);
+        return $disk->download($user->video_key, 'doctor-video-'.$user->employee_code.'.mp4');
+    }
+
+    private function generateVideo(string $source, string $photo, string $output, string $label): void
+    {
+        $font = $this->fontPath();
         $filter = "[1:v]scale=220:220[photo];".
             "[0:v][photo]overlay=x=(W-w)/2-210:y=(H-h)/2:enable='gte(t,28)'[withphoto];".
-            "[withphoto]drawtext=fontfile='{$font}':text='{$safeLabel}':fontcolor=white:fontsize=54:".
+            "[withphoto]drawtext=fontfile='{$font}':text='{$this->escapeDrawText($label)}':fontcolor=white:fontsize=54:".
             "borderw=3:bordercolor=black@0.35:shadowcolor=black@0.55:shadowx=3:shadowy=3:".
             "x=(w/2)+35:y=(h-text_h)/2:enable='gte(t,28)'[outv]";
 
         $process = new Process([
-            env('FFMPEG_PATH', 'ffmpeg'), '-y', '-i', $sourceVideo, '-i', $photoPath,
+            config('video.ffmpeg'), '-y', '-i', $source, '-i', $photo,
             '-filter_complex', $filter, '-map', '[outv]', '-map', '0:a?',
-            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-            '-c:a', 'copy', '-movflags', '+faststart', $outputPath,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+            '-c:a', 'copy', '-movflags', '+faststart', $output,
         ]);
         $process->setTimeout(300);
+        $process->mustRun();
+    }
 
-        try {
-            $process->mustRun();
-        } catch (Throwable $exception) {
-            report($exception);
-            File::deleteDirectory($workDir);
-            return back()->withInput()->withErrors(['video' => 'The video could not be generated. Please try again.']);
+    private function fontPath(): string
+    {
+        $candidates = array_filter([
+            config('video.font'),
+            'C:/Windows/Fonts/arialbd.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf',
+        ]);
+        foreach ($candidates as $font) {
+            if (File::exists($font)) {
+                $font = str_replace('\\', '/', $font);
+                return preg_replace('/^([A-Za-z]):\//', '$1\\:/', $font);
+            }
         }
-
-        File::deleteDirectory($workDir);
-
-        return redirect()->route('video.form')->with([
-            'video_url' => asset('generated/'.$outputName).'#t=27.5',
-            'doctor_label' => $doctorLabel.' · '.$data['city'],
-        ])->withFragment('result');
+        throw new \RuntimeException('No compatible video font was found. Set VIDEO_FONT_PATH.');
     }
 
     private function escapeDrawText(string $text): string
     {
-        return str_replace(
-            ['\\', ':', "'", '%', '[', ']'],
-            ['\\\\', '\\:', "\\'", '\\%', '\\[', '\\]'],
-            $text,
-        );
+        return str_replace(['\\', ':', "'", '%', '[', ']'], ['\\\\', '\\:', "\\'", '\\%', '\\[', '\\]'], $text);
     }
 }
