@@ -37,8 +37,61 @@ class AdminController extends Controller
 
     public function dashboard(): View
     {
-        $submissions = User::query()->where('is_admin', false)->latest()->paginate(15);
-        return view('admin.dashboard', compact('submissions'));
+        $query = User::query()->where('is_admin', false);
+        $counts = [
+            'total' => (clone $query)->count(),
+            'completed' => (clone $query)->where('video_status', 'completed')->count(),
+            'processing' => (clone $query)->where('video_status', 'processing')->count(),
+            'failed' => (clone $query)->where('video_status', 'failed')->count(),
+        ];
+        return view('admin.dashboard', compact('counts'));
+    }
+
+    public function submissions(Request $request): View
+    {
+        $search = trim((string) $request->query('search'));
+        $submissions = User::query()->where('is_admin', false)
+            ->when($search !== '', function ($query) use ($search): void {
+                $query->where(function ($query) use ($search): void {
+                    $query->where('employee_code', 'like', "%{$search}%")
+                        ->orWhere('name', 'like', "%{$search}%")
+                        ->orWhere('city', 'like', "%{$search}%")
+                        ->orWhere('video_status', 'like', "%{$search}%");
+                });
+            })->latest()->paginate(10)->withQueryString();
+        return view('admin.submissions', compact('submissions', 'search'));
+    }
+
+    public function export(): StreamedResponse
+    {
+        $filename = 'doctor-video-submissions-'.now()->format('Y-m-d').'.csv';
+
+        return response()->streamDownload(function (): void {
+            $handle = fopen('php://output', 'wb');
+            fwrite($handle, "\xEF\xBB\xBF");
+            fputcsv($handle, [
+                'ID', 'Employee Code', 'Prefix', 'Doctor Name', 'City', 'Status',
+                'Photo URL', 'Video URL', 'Submitted At',
+            ]);
+
+            User::query()->where('is_admin', false)->latest()->chunk(500, function ($users) use ($handle): void {
+                foreach ($users as $user) {
+                    fputcsv($handle, [
+                        $user->id,
+                        $user->employee_code,
+                        $user->prefix,
+                        $user->name,
+                        $user->city,
+                        ucfirst($user->video_status),
+                        $user->photo_url,
+                        $user->video_url,
+                        $user->created_at?->format('Y-m-d H:i:s'),
+                    ]);
+                }
+            });
+
+            fclose($handle);
+        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     public function download(User $user): StreamedResponse

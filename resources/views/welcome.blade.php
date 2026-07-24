@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ csrf_token() }}"><title>Doctor Video Personalisation | Meyer Vitabiotics</title>@vite(['resources/css/app.css','resources/js/app.js'])</head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ csrf_token() }}"><title>Doctor Video Personalisation | Meyer Vitabiotics</title>@include('partials.assets')</head>
 <body><main class="page-shell"><section class="form-card" aria-labelledby="page-title">
 <header class="brand-header"><img src="{{ asset('assets/meyer-vitabiotics.jpg') }}" alt="Meyer Vitabiotics" class="brand-logo"><span class="header-rule"></span><p>Doctor video personalisation</p></header>
 @if($errors->any())<div class="alert alert-error" role="alert"><strong>Please check the details below.</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 @if($completedUser)
-<div class="result-panel" id="result"><div class="success-icon">✓</div><div><h2>Your personalised video is ready</h2><p>{{ $completedUser->prefix }} {{ $completedUser->name }} · {{ $completedUser->city }}</p></div><video controls playsinline preload="metadata" src="{{ $completedUser->video_url }}#t=27.5"></video><a class="download-button" href="{{ route('video.download',[$completedUser,$completedUser->download_token]) }}">Download video</a><a class="new-link" href="{{ route('video.form') }}">Create another video</a></div>
+<div class="result-panel" id="result"><div class="success-icon">✓</div><div><h2>Your personalised video is ready</h2><p>{{ $completedUser->prefix }} {{ $completedUser->name }} · {{ $completedUser->city }}</p></div><video controls playsinline preload="metadata" src="{{ $completedUser->video_url }}"></video><a class="download-button" href="{{ route('video.download',[$completedUser,$completedUser->download_token]) }}">Download video</a><a class="new-link" href="{{ route('video.form') }}">Create another video</a></div>
 @else
 <div class="intro"><span class="eyebrow">Personalised in moments</span><h1 id="page-title">Create a doctor video</h1><p>Enter the doctor's details and add a clear photograph. The personalised introduction will appear from 28 seconds.</p></div>
 <form action="{{ route('video.generate') }}" method="POST" enctype="multipart/form-data" id="video-form" novalidate>@csrf

@@ -13,6 +13,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::post('/login', [AdminController::class, 'authenticate'])->name('authenticate');
     Route::middleware('admin')->group(function () {
         Route::get('/', [AdminController::class, 'dashboard'])->name('dashboard');
+        Route::get('/submissions', [AdminController::class, 'submissions'])->name('submissions');
+        Route::get('/export', [AdminController::class, 'export'])->name('export');
         Route::get('/submissions/{user}/download', [AdminController::class, 'download'])->name('download');
         Route::post('/logout', [AdminController::class, 'logout'])->name('logout');
     });
